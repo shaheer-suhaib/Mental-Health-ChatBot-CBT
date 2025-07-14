@@ -1,0 +1,17 @@
+# LangGraph and LangChain dependencies
+langgraph
+langchain
+langchain-core
+langchain-google-genai
+langchain-community
+
+# Google 
+google-generativeai
+
+python-dotenv
+
+
+typing-extensions
+
+
+regex
