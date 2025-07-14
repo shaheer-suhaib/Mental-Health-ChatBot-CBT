@@ -4,23 +4,24 @@ An interactive CBT (Cognitive Behavioral Therapy) chatbot built using the **Gemi
 
 ---
 
-## 📈 Project Flows
+##  Project Flows
 
-### ✅ Proposed Full CBT Flow
+###  Proposed Full CBT Flow
 > Full roadmap of intended features and flow structure to be implemented
 
 ![Proposed Flow](img2.jpg)
 
 ---
 
-### ✅ Current Implemented Flow
+###  Current Implemented Flow
 > What has been built and is working today
 
 ![Current Flow](image.png)
 
----
+
 
 ## 📁 Project Structure
+```
 CBT_CHATBOT/
 │
 ├── after_experimentations/ # Conversion to code after Jupyter Notebook experiments
@@ -36,19 +37,20 @@ CBT_CHATBOT/
 ├── image.png
 ├── img2.jpg
 └── README.md
-
+```
 text
 
 ### 🧭 Recommended File Navigation
 
+
 To understand how the chatbot works:
 
 #### Start with:
-📘 `Experimentations/Testing_Flow.ipynb`  
+ `Experimentations/Testing_Flow.ipynb`  
 *This notebook contains the early-stage design and logic testing of the CBT chatbot.*
 
 #### Then explore:
-💻 `after_experimentations/` folder  
+ `after_experimentations/` folder  
 *This contains the final converted Python code based on the experimental logic:*
 
 - `CBT_State.py`: Defines state schema and tracking  
@@ -71,16 +73,3 @@ To understand how the chatbot works:
 ## Example Output
 
 ![Example Output](image-1.png)
-
----
-
-## 🚀 How to Run the Project
-
-To get started with the CBT Chatbot:
-
-### 1. Install Dependencies
-
-Make sure you have Python installed (preferably Python 3.10+), then install all required packages:
-
-```bash
-pip install -r requirements.txt
