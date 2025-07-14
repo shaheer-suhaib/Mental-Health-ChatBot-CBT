@@ -1,8 +1,7 @@
 from langgraph.graph import StateGraph, END
 
 from typing import TypedDict, Annotated, Sequence, List
-from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage
-from operator import add as add_messages
+from langchain_core.messages import BaseMessage, SystemMessage, HumanMessage, ToolMessage,FunctionMessage,AIMessage
 import json
 import re
 import google.generativeai as genai
@@ -14,21 +13,33 @@ from langgraph.prebuilt import ToolNode
 from CBT_State import AgentState
 
 
+from dotenv import load_dotenv
+import os
+
+
+load_dotenv()
+
 class CBTGraph:
     def __init__(self):
-     
+        GEMINI_API_KEY_JSON_LLM = os.getenv("GEMINI_API_KEYJ")
+
+        genai.configure(api_key=GEMINI_API_KEY_JSON_LLM)
+            
        
        
        
         self.llm_json = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.0-flash-lite",
             generation_config=GenerationConfig(
                 response_mime_type="application/json",
                 temperature=0
             )
+            
         )
 
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=self.GEMINI_API_KEY)
+        Talk_llm = os.getenv("GEMINI_API_KEYY")
+
+        self.llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-lite", google_api_key=Talk_llm)
         
         #  tools
         self.tools = [self.run_phq9_assessment, self.run_gad7_assessment]
@@ -37,32 +48,20 @@ class CBTGraph:
         #  graph
         self.graph = self._build_graph()
 
+    def print_red(self,text):
+        print(f"\033[31m{text}\033[0m") 
     def _build_graph(self):
-    
         graph = StateGraph(AgentState)
         graph.add_node("intake_node", self.intake_node)
         graph.add_node("Case_Formulatin", self.case_formulation_node)
-        graph.add_node("router_node", self.router_node)
-        graph.add_node("emotional_check_in_node",self.emotional_check_in_node)
+        graph.add_node("Screening_Node",self.Screening_Node)
 
 
         graph.set_entry_point("intake_node")
         graph.add_edge("intake_node","Case_Formulatin")
-        graph.add_edge("Case_Formulatin","router_node")
+        graph.add_edge("Case_Formulatin","Screening_Node")
 
 
-
-        graph.add_conditional_edges(
-            "router_node",
-            self.decide_next_node, 
-
-            {
-                # Edge: Node
-            #  "psychoeducation": "pss",
-                "emotional_check_in": "emotional_check_in_node",
-            }
-
-        )
 
         # ToolNode()
         tool_node = ToolNode(tools=self.tools)
@@ -70,9 +69,8 @@ class CBTGraph:
 
 
 
-
         graph.add_conditional_edges(
-            "emotional_check_in_node",
+            "Screening_Node",
             self.should_continue,
         {
                 "continue": "PHQ9/GAD-7 TOOLS",
@@ -81,94 +79,89 @@ class CBTGraph:
         }
         )
 
-        graph.add_edge("PHQ9/GAD-7 TOOLS", "emotional_check_in_node")
+        graph.add_edge("PHQ9/GAD-7 TOOLS", "Screening_Node")
 
 
+        graph.set_finish_point("Screening_Node")
+            
 
-
-
-
-        graph.set_finish_point("emotional_check_in_node")
       
         return graph.compile()
 
     def intake_node(self, state: AgentState) -> AgentState:
-      
-
-       
-        human_messages = [msg for msg in state["messages"] if isinstance(msg, HumanMessage)]
-        if not human_messages:
-            raise ValueError("No user message found for intake.")
-
-        user_input = human_messages[0].content
-
-       
+        user_input = state["messages"][-1].content
+    
         prompt = (
             "You are a CBT assistant.\n"
             "Extract the user's presenting problem and a brief emotional history from this message:\n\n"
-            f"{user_input}\n\n"
             "Respond ONLY with valid JSON in this exact format:\n"
+            f"User message: {user_input}\n\n"
             "{\n"
             "  \"presenting_problem\": \"...\",\n"
             "  \"history\": \"...\"\n"
             "}"
         )
 
-        # messages = [SystemMessage(content=prompt)] + state["messages"]
+        response = self.llm_json.generate_content(prompt)
 
+
+        response_content = response.text
     
-        # response = self.llm.invoke(messages)
-        response = self.llm.invoke([SystemMessage(content=prompt), HumanMessage(content=user_input)])
-
-        
-        response_content = response.content
-        
-        
         if isinstance(response_content, str):
-            # Remove markdown code blocks if present
+        
             json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_content, re.DOTALL)
             if json_match:
                 response_content = json_match.group(1)
             else:
-                # Try to find JSON object in the text
+                
                 json_match = re.search(r'\{.*?\}', response_content, re.DOTALL)
                 if json_match:
                     response_content = json_match.group(0)
         
-        # Parse the JSON
+    
         try:
             if isinstance(response_content, dict):
                 result = response_content
             else:
                 result = json.loads(response_content)
         except (json.JSONDecodeError, TypeError):
-            # Fallback: create a simple result
+        
             result = {
                 "presenting_problem": user_input,
                 "history": "No specific history provided"
             }
 
+
+        presenting_problem = result.get("presenting_problem", "")
+        history = result.get("history", "")  
         
+        
+        state['presenting_problem'] = presenting_problem
+        state['history'] = history
+        
+        t = FunctionMessage(
+            name="t",
+            content=f'{{"presenting_problem": "{presenting_problem}", "history": "{history}"}}'
+        ) 
+
+        prompt = ( f"You are a CBT assistant. Acknowledge that you understand the user's situation from their problem: {presenting_problem} and history: {history}. Respond in just 3 lines." )
+
+        msg=self.llm.invoke(prompt)
+        state["messages"].append( AIMessage(content=msg.content) )
+
+        self.print_red("                  --------------INTAKE NODE   OUT---------------------")
+
+    
         return {
-            # "messages": messages + [response],
-
-            "messages": [SystemMessage(content=prompt), response],
-            "stage": "case_formulation_node",
-            "presenting_problem": result.get("presenting_problem", ""),
-            "history": result.get("history", ""),
-            "activating_event": "",
-            "beliefs": [],
-            "consequences": [],
-            "last_user_message": user_input,
-            "next_node": "",
-            "ready_to_end": False
+            "presenting_problem": presenting_problem,
+            "history": history,  
+            'messages' :  [ t ]
         }
-
   
   
   
     def case_formulation_node(self, state: AgentState) -> AgentState:
-        presenting_problem = state["presenting_problem"]
+     
 
         prompt = (
             "You are a CBT assistant.\n"
@@ -176,7 +169,8 @@ class CBTGraph:
             "- A (Activating Event): what clearly happened?\n"
             "- B (Beliefs): only include if user directly stated their thoughts or judgments\n"
             "- C (Consequences): only include if emotions or actions are clearly stated\n\n"
-            f"Presenting Problem:\n{presenting_problem}\n\n"
+            f"Presenting Problem:\n{  state["presenting_problem"]}\n\n"
+            f"histroy:\n {state["history"]}\n\n"
             "Respond in this EXACT format:\n"
             "{\n"
             "  \"activating_event\": \"...\",\n"
@@ -196,11 +190,13 @@ class CBTGraph:
         except:
             result = {}
 
+        self.print_red("                  --------------case_formulation_node   OUT---------------------")
+
         return {
             **state,
-            # "messages": state["messages"] + [HumanMessage(content=response.text)],
-            "messages": [HumanMessage(content=f'{{"activating_event": "{result.get("activating_event", "")}", "beliefs": {result.get("beliefs", [])}, "consequences": {result.get("consequences", [])}}}')],
-            "stage": "goal_setting_node",
+         
+            "messages": [FunctionMessage(name ="t",content=f'{{"activating_event": "{result.get("activating_event", "")}", "beliefs": {result.get("beliefs", [])}, "consequences": {result.get("consequences", [])}}}')],
+             
             "activating_event": result.get("activating_event", ""),
             "beliefs": result.get("beliefs", []),
             "consequences": result.get("consequences", [])
@@ -208,54 +204,49 @@ class CBTGraph:
 
 
 
-    def router_node(self, state: AgentState) -> AgentState:
-      
-        
-        prompt = (
-            "You are a CBT workflow assistant. Choose the next most appropriate therapeutic step.\n\n"
-            "Current State:\n"
-            f"Presenting Problem: {state['presenting_problem']}\n"
-            f"History: {state['history']}\n"
-            f"Activating Event: {state['activating_event']}\n"
-            f"Beliefs: {state['beliefs']}\n"
-            f"Consequences: {state['consequences']}\n"
-            f"Last User Message: {state['last_user_message']}\n\n"
-            "Available Options:\n"
-            "- emotional_check_in: If user shows distress, negative emotions, or needs emotional support\n"
-            "- psychoeducation: If user needs to understand CBT concepts or coping strategies\n"
-            "- emergency_support: If there are signs of crisis, panic, or suicidal thoughts\n"
-            "- problem_solving: If user is stuck or needs practical solutions\n"
-            "- goal_setting_node: If ready to set therapeutic goals\n\n"
-            "Respond in this EXACT format:\n"
-            "{\n"
-            "  \"next_node\": \"...\",\n"
-            "  \"reasoning\": \"...\"\n"
-            "}"
-        )
-        
-        response = self.llm_json.generate_content(prompt)
-        
-        # Parse JSON response
-        try:
-            result = json.loads(response.text.strip())
-            next_node = result.get("next_node")
-            if not next_node:
-                raise ValueError("Missing next_node in response")
-        except:
-            raise ValueError("Router failed to parse LLM response - check model configuration")
-        
-        # Validate the response
-        valid_nodes = ["emotional_check_in", "psychoeducation", "emergency_support", "problem_solving", "goal_setting_node"]
-        if next_node not in valid_nodes:
-            raise ValueError(f"Invalid next_node '{next_node}' - must be one of {valid_nodes}")
-        
-        return {
-            **state,
-            "next_node": next_node,
-            "stage": "router"
-        }
+
     
-    
+    def Screening_Node(self, state: AgentState) -> AgentState:
+                self.print_red("\n                  --------------Screening_Tool---------------------")
+
+                if state['next_node']:
+                    return
+        
+            
+                
+                prompt = (
+                    "You are a CBT therapist doing an Screening Tool test You are provided with user current information Based on The informatin you can run depression and anxiety screening tools. [run_phq9_assessment, run_gad7_assessment].You can run just one tool only.  User information is Shown\n\n"
+                
+                    f"Presenting Problem: {state['presenting_problem']}\n"
+                    f"history: {state['history']}\n"
+                    f"Belief: {state['beliefs']}\n"
+                    f"Consequences: {state['consequences']}\n"
+                
+            
+                )
+                
+            
+                response = self.llm.invoke([HumanMessage(content=prompt)])
+            
+            
+                if hasattr(response, 'tool_calls') and response.tool_calls:
+                    for tool_call in response.tool_calls:
+                        self.print_red(f"\n Running {tool_call['name']}...")
+                    
+                    
+
+                state["next_node"] = True
+
+                self.print_red("\n                  --------------Screening_Tool  OUT---------------------")
+
+                
+                return {
+                    **state,
+                    "messages": [response],
+                    
+                }
+
+        
     @tool
     def run_phq9_assessment() -> dict:
         """Run PHQ-9 depression screening assessment FOR user if it is needed"""
@@ -298,52 +289,26 @@ class CBTGraph:
 
 
 
-
-    def emotional_check_in_node(self, state: AgentState) -> AgentState:
-          
-            
-            prompt = (
-                "You are a CBT therapist doing an emotional check-in.\n\n"
-                "Current State:\n"
-                f"Presenting Problem: {state['presenting_problem']}\n"
-                f"Consequences: {state['consequences']}\n"
-                f"Last User Message: {state['last_user_message']}\n\n"
-                "Provide empathetic emotional support and validate their feelings.\n"
-                "Based on their emotional state, use the appropriate assessment tool if needed.\n"
-                "You have access to depression and anxiety screening tools. [run_phq9_assessment, run_gad7_assessment]"
-            )
-            
-           
-            response = self.llm.invoke([HumanMessage(content=prompt)])
-            
-           
-            print(f"\n🎯 EMOTIONAL CHECK-       NODE:")
-           
-            
-            # Check if tools were called
-            if hasattr(response, 'tool_calls') and response.tool_calls:
-                for tool_call in response.tool_calls:
-                    print(f"\n🔍 Running {tool_call['name']}...")
-                 
-            
-            return {
-                **state,
-                "messages": state["messages"] + [response],
-                "stage": "emotional_check_in",
-                "next_node": True
-            }
-
-    
     
     def decide_next_node(self, state: AgentState) -> AgentState:
         
         return state['next_node']
     
-    def should_continue(state: AgentState) -> str:
-        last = state["messages"][-1]
-        if not getattr(last, "tool_calls", None):
+    def should_continue(self,state: AgentState) -> str:
+        
+        messages = state["messages"]
+        if not messages:
             return "end"
-        return "continue"
+        
+        last_message = messages[-1]
+        
+    
+        if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            return "continue"
+        else:
+
+            print("Ending tool execution")
+            return "end"
 
 
     def get_graph(self):
